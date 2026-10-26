@@ -74,7 +74,6 @@ public class SwiftFlutterArchivePlugin: NSObject, FlutterPlugin {
             log("jobId: " + (jobId?.description ?? ""))
 
             DispatchQueue.global(qos: .userInitiated).async {
-                let fileManager = FileManager()
                 let sourceURL = URL(fileURLWithPath: sourceDir)
                 let destinationURL = URL(fileURLWithPath: zipFile)
                 do {
@@ -86,10 +85,9 @@ public class SwiftFlutterArchivePlugin: NSObject, FlutterPlugin {
                                               reportProgress: reportProgress,
                                               jobId: jobId)
                     } else {
-                        try fileManager.zipItem(at: sourceURL,
-                                                to: destinationURL,
-                                                shouldKeepParent: includeBaseDirectory,
-                                                compressionMethod: .deflate)
+                        try self.zipDirectorySkippingDeleted(at: sourceURL,
+                                                             to: destinationURL,
+                                                             shouldKeepParent: includeBaseDirectory)
                     }
                     DispatchQueue.main.async {
                         self.log("Created zip at: " + destinationURL.path)
@@ -148,7 +146,7 @@ public class SwiftFlutterArchivePlugin: NSObject, FlutterPlugin {
 
                     for item in files {
                         self.log("Adding: " + item)
-                        try archive.addEntry(with: item, relativeTo: sourceURL, compressionMethod: .deflate)
+                        try self.addEntrySkippingDeleted(archive, with: item, relativeTo: sourceURL)
                     }
 
                     DispatchQueue.main.async {
@@ -320,7 +318,32 @@ public class SwiftFlutterArchivePlugin: NSObject, FlutterPlugin {
 
             let relativePath = item.path.replacingFirstOccurrence(of: baseDirUrl.path + "/", with: "")
             log("Adding: " + relativePath)
-            try archive.addEntry(with: relativePath, relativeTo: baseDirUrl, compressionMethod: .deflate)
+            try addEntrySkippingDeleted(archive, with: relativePath, relativeTo: baseDirUrl)
+        }
+    }
+
+    /// ZIPFoundation's `FileManager.zipItem` for a directory.
+    private func zipDirectorySkippingDeleted(at sourceURL: URL, to destinationURL: URL, shouldKeepParent: Bool) throws {
+        let archive = try Archive(url: destinationURL, accessMode: .create)
+        var subPaths = try FileManager().subpathsOfDirectory(atPath: sourceURL.path)
+        // root dir entry, keeps its attributes
+        if shouldKeepParent { subPaths.append("") }
+
+        let directoryPrefix = sourceURL.lastPathComponent
+        let baseURL = shouldKeepParent ? sourceURL.deletingLastPathComponent() : sourceURL
+        for entryPath in subPaths {
+            let finalEntryPath = shouldKeepParent ? directoryPrefix + "/" + entryPath : entryPath
+            try addEntrySkippingDeleted(archive, with: finalEntryPath, relativeTo: baseURL)
+        }
+    }
+
+    private func addEntrySkippingDeleted(_ archive: Archive, with path: String, relativeTo baseURL: URL) throws {
+        do {
+            try archive.addEntry(with: path, relativeTo: baseURL, compressionMethod: .deflate)
+        } catch {
+            let fileURL = baseURL.appendingPathComponent(path)
+            if itemExists(at: fileURL) { throw error }
+            log("Skipping deleted file: " + fileURL.path)
         }
     }
 

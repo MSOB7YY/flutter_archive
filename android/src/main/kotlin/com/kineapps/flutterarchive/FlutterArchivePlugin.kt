@@ -23,6 +23,7 @@ import java.io.BufferedOutputStream
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.charset.Charset
@@ -279,8 +280,9 @@ class FlutterArchivePlugin : FlutterPlugin, MethodCallHandler {
             } else {
                 Log.i("zip", "Adding file: $relativePath")
                 ++handledFilesCount
+                val fileInputStream = openFileOrNullIfDeleted(f) ?: continue
                 withContext(Dispatchers.IO) {
-                    FileInputStream(f).use { fileInputStream ->
+                    fileInputStream.use {
                         val entry = ZipEntry(relativePath)
                         entry.time = f.lastModified()
                         entry.size = f.length()
@@ -344,7 +346,8 @@ class FlutterArchivePlugin : FlutterPlugin, MethodCallHandler {
                 val file = rootDirectory.resolve(relativeFilePath)
                 val cleanedRelativeFilePath = file.relativeTo(rootDirectory).path
                 Log.i("zip", "Adding file: $cleanedRelativeFilePath")
-                FileInputStream(file).use { fileInputStream ->
+                val fileInputStream = openFileOrNullIfDeleted(file) ?: continue
+                fileInputStream.use {
                     val entry = ZipEntry(cleanedRelativeFilePath)
                     entry.time = file.lastModified()
                     entry.size = file.length()
@@ -352,6 +355,17 @@ class FlutterArchivePlugin : FlutterPlugin, MethodCallHandler {
                     fileInputStream.copyTo(zipOutputStream)
                 }
             }
+        }
+    }
+
+    @Throws(IOException::class)
+    private fun openFileOrNullIfDeleted(file: File): FileInputStream? {
+        return try {
+            FileInputStream(file)
+        } catch (e: FileNotFoundException) {
+            if (file.exists()) throw e
+            Log.w("zip", "Skipping deleted file: ${file.path}")
+            null
         }
     }
 
